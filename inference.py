@@ -95,7 +95,8 @@ def pred_show_image_grid(data_path, model_path, device, max_samples=None):
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("grid_output.png")
+    print("Saved grid_output.png")
 
 
 @torch.no_grad()
