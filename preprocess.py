@@ -50,7 +50,7 @@ def get_variable(ds):
     candidates = list(ds.data_vars)
     if len(candidates) == 1:
         return candidates[0]
-    for name in ["cape", "cin", "hgt", "prob", "CAPE", "CIN", "HGT", "PROB"]:
+    for name in ["cape", "cin", "hgt", "prob", "CAPE", "CIN", "HGT", "PROB", "p_perfect_tor", "p_perfect_sigtor", "p_perfect_sig_tor"]:
         if name in ds.data_vars:
             return name
     raise KeyError(
