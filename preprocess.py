@@ -5,12 +5,11 @@ import torch
 from torch.nn.functional import interpolate
 
 # ── Input .nc file paths (2014) ───────────────────────────────────────────────
-# Make sure these filenames exactly match what you downloaded from NOAA PSL.
-# No backslashes needed — just plain strings with spaces if the filename has them.
-CAPE_PATH        = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
-CIN_PATH         = "/Users/parthapratimdas/Downloads/CIN 2014.nc"       # Must be real CIN file, NOT CAPE
-HGT_PATH         = "/Users/parthapratimdas/Downloads/HGT Tropo 2014.nc"
-TOR_TARGET_PATH  = "/Users/parthapratimdas/Downloads/Pper Tor 1979-2023.nc"
+# Plain strings — no backslashes needed before spaces.
+CAPE_PATH          = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
+CIN_PATH           = "/Users/parthapratimdas/Downloads/CIN 2014.nc"
+HGT_PATH           = "/Users/parthapratimdas/Downloads/HGT Tropo 2014.nc"
+TOR_TARGET_PATH    = "/Users/parthapratimdas/Downloads/Pper Tor 1979-2023.nc"
 SIGTOR_TARGET_PATH = "/Users/parthapratimdas/Downloads/Pper Sig Tor 1979-2023.nc"
 
 OUTPUT_DIR = "./data"
@@ -32,59 +31,103 @@ def create_folders():
 
 def resize_grid(matrix_2d):
     """
-    Resize any 2D weather matrix to exactly 256x256 using bilinear interpolation.
-    Bilinear is correct for continuous fields (CAPE, CIN, probability maps).
+    Resize a 2D weather matrix to exactly (256, 256) using bilinear interpolation.
+    - nan_to_num runs first to kill any NOAA fill values.
+    - Returns a plain (256, 256) numpy float32 array.
     """
-    arr = np.nan_to_num(matrix_2d, nan=0.0, posinf=0.0, neginf=0.0)
-    tensor = torch.tensor(arr, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    arr = np.nan_to_num(matrix_2d, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    tensor  = torch.tensor(arr).unsqueeze(0).unsqueeze(0)           # [1,1,H,W]
     resized = interpolate(tensor, size=(256, 256), mode='bilinear', align_corners=False)
-    return resized.squeeze().numpy()
+    return resized.squeeze().numpy()                                  # (256,256)
 
 
 def get_variable(ds):
     """
-    Auto-detect the main data variable in a NetCDF file.
-    NOAA files often use lowercase names like 'cape', 'cin', 'hgt', 'prob'.
-    Falls back gracefully with a clear error if not found.
+    Auto-detect the main data variable in a NetCDF dataset.
+    Drops pure coordinate variables and tries common NOAA names.
+    Raises a clear error listing available names if nothing matches.
     """
-    # Drop pure coordinate/dimension variables
-    candidates = [v for v in ds.data_vars]
+    candidates = list(ds.data_vars)
     if len(candidates) == 1:
         return candidates[0]
-    # Common NOAA variable names in priority order
     for name in ["cape", "cin", "hgt", "prob", "CAPE", "CIN", "HGT", "PROB"]:
         if name in ds.data_vars:
             return name
     raise KeyError(
-        f"Cannot auto-detect variable. Available variables: {list(ds.data_vars)}. "
-        "Update get_variable() with the correct name."
+        f"Cannot auto-detect variable. Available: {candidates}. "
+        "Set the variable name manually in get_variable()."
     )
+
+
+def extract_2d(da, date):
+    """
+    Safely extract a 2D (lat x lon) slice from a DataArray for a given date.
+
+    Handles the two most common extra dimensions in NOAA reanalysis files:
+      - 'level'    : multiple pressure levels  -> take index 0 (surface/lowest)
+      - 'ensemble' : ensemble members          -> take index 0
+    After dropping those, .squeeze() removes any remaining size-1 dims.
+    Raises clearly if the result is still not 2D.
+    """
+    da = da.sel(time=date)
+
+    if 'level' in da.dims:
+        da = da.isel(level=0)
+    if 'ensemble' in da.dims:
+        da = da.isel(ensemble=0)
+
+    da = da.squeeze()
+
+    if da.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D slice after selecting time={date} but got shape {da.shape} "
+            f"with dims {da.dims}. Add an explicit .isel() for the extra dimension."
+        )
+
+    return da.values   # numpy array (H, W)
+
+
+def save_validated(arr, path, label):
+    """
+    Resize to (256,256), assert shape, then save as .npy.
+    Fails loudly if resize_grid returns an unexpected shape.
+    """
+    result = resize_grid(arr)
+    if result.shape != (256, 256):
+        raise ValueError(
+            f"resize_grid returned {result.shape} instead of (256, 256) "
+            f"for {label}. Check the input array dimensions."
+        )
+    np.save(path, result)
 
 
 def main():
     print("Creating directory structure...")
     create_folders()
 
-    # ── Load feature datasets (already 2014-only files) ──────────────────────
+    # ── Load datasets with use_cftime=False ──────────────────────────────────
+    # NOAA files sometimes use cftime objects instead of numpy.datetime64.
+    # Forcing use_cftime=False ensures all time axes are numpy.datetime64,
+    # so np.intersect1d works correctly across all five datasets.
     print("Loading 2014 atmospheric feature files...")
-    ds_cape = xr.open_dataset(CAPE_PATH)
-    ds_cin  = xr.open_dataset(CIN_PATH)
-    ds_hgt  = xr.open_dataset(HGT_PATH)
+    ds_cape = xr.open_dataset(CAPE_PATH,          use_cftime=False)
+    ds_cin  = xr.open_dataset(CIN_PATH,           use_cftime=False)
+    ds_hgt  = xr.open_dataset(HGT_PATH,           use_cftime=False)
 
-    # ── Load multi-year target files and slice 2014 ───────────────────────────
     print("Loading target files and slicing 2014...")
-    ds_tor    = xr.open_dataset(TOR_TARGET_PATH).sel(time="2014")
-    ds_sigtor = xr.open_dataset(SIGTOR_TARGET_PATH).sel(time="2014")
+    ds_tor    = xr.open_dataset(TOR_TARGET_PATH,    use_cftime=False).sel(time="2014")
+    ds_sigtor = xr.open_dataset(SIGTOR_TARGET_PATH, use_cftime=False).sel(time="2014")
 
-    # Auto-detect variable names inside each file
+    # Auto-detect variable names
     cape_var   = get_variable(ds_cape)
     cin_var    = get_variable(ds_cin)
     hgt_var    = get_variable(ds_hgt)
     tor_var    = get_variable(ds_tor)
     sigtor_var = get_variable(ds_sigtor)
 
-    print(f"Detected variables  →  cape: '{cape_var}'  cin: '{cin_var}'  "
-          f"hgt: '{hgt_var}'  tor: '{tor_var}'  sigtor: '{sigtor_var}'")
+    print(f"Detected variables  ->  "
+          f"cape='{cape_var}'  cin='{cin_var}'  hgt='{hgt_var}'  "
+          f"tor='{tor_var}'  sigtor='{sigtor_var}'")
 
     # ── Build fully-aligned date list across ALL five datasets ───────────────
     dates = ds_cape.time.values
@@ -96,42 +139,49 @@ def main():
     ]:
         dates = np.intersect1d(dates, ds.time.values)
 
-    print(f"Perfectly aligned days across all datasets: {len(dates)}")
+    print(f"Aligned days across all five datasets: {len(dates)}")
     if len(dates) == 0:
         raise RuntimeError(
-            "No overlapping dates found. Check that all files cover 2014 "
-            "and that time coordinates are in the same format."
+            "No overlapping dates found. "
+            "Check that all .nc files cover 2014 and that use_cftime=False "
+            "decoded the time axes correctly. "
+            "Try printing ds_cape.time.values[:3] and ds_tor.time.values[:3] "
+            "to inspect the formats."
         )
 
     # ── Process each day ──────────────────────────────────────────────────────
+    skipped = []
     for i, date in enumerate(dates):
         date_str = np.datetime_as_string(date, unit='D')
-        print(f"[{i+1}/{len(dates)}] Processing {date_str} ...", end=" ")
+        print(f"[{i+1}/{len(dates)}] {date_str} ...", end=" ", flush=True)
 
-        # Extract 2D slice for this day.
-        # .sel(time=date) drops the time dimension; .squeeze() removes any
-        # leftover size-1 dimensions (e.g. level, ensemble member).
-        cape_map   = ds_cape[cape_var].sel(time=date).squeeze().values
-        cin_map    = ds_cin[cin_var].sel(time=date).squeeze().values
-        hgt_map    = ds_hgt[hgt_var].sel(time=date).squeeze().values
-        tor_map    = ds_tor[tor_var].sel(time=date).squeeze().values
-        sigtor_map = ds_sigtor[sigtor_var].sel(time=date).squeeze().values
+        try:
+            cape_map   = extract_2d(ds_cape[cape_var],     date)
+            cin_map    = extract_2d(ds_cin[cin_var],       date)
+            hgt_map    = extract_2d(ds_hgt[hgt_var],       date)
+            tor_map    = extract_2d(ds_tor[tor_var],       date)
+            sigtor_map = extract_2d(ds_sigtor[sigtor_var], date)
 
-        # resize_grid already calls nan_to_num internally
-        np.save(os.path.join(OUTPUT_DIR, "train/cape",           f"{date_str}.npy"),
-                resize_grid(cape_map))
-        np.save(os.path.join(OUTPUT_DIR, "train/cin",            f"{date_str}.npy"),
-                resize_grid(cin_map))
-        np.save(os.path.join(OUTPUT_DIR, "train/geo",            f"{date_str}.npy"),
-                resize_grid(hgt_map))
-        np.save(os.path.join(OUTPUT_DIR, "train_masks/tornado",  f"{date_str}.npy"),
-                resize_grid(tor_map))
-        np.save(os.path.join(OUTPUT_DIR, "train_masks/sigtor",   f"{date_str}.npy"),
-                resize_grid(sigtor_map))
+            save_validated(cape_map,   os.path.join(OUTPUT_DIR, "train/cape",          f"{date_str}.npy"), f"{date_str}/cape")
+            save_validated(cin_map,    os.path.join(OUTPUT_DIR, "train/cin",           f"{date_str}.npy"), f"{date_str}/cin")
+            save_validated(hgt_map,    os.path.join(OUTPUT_DIR, "train/geo",           f"{date_str}.npy"), f"{date_str}/geo")
+            save_validated(tor_map,    os.path.join(OUTPUT_DIR, "train_masks/tornado", f"{date_str}.npy"), f"{date_str}/tor")
+            save_validated(sigtor_map, os.path.join(OUTPUT_DIR, "train_masks/sigtor",  f"{date_str}.npy"), f"{date_str}/sigtor")
 
-        print("done")
+            print("done")
 
-    print(f"\nPreprocessing complete! {len(dates)} days saved to {OUTPUT_DIR}")
+        except Exception as e:
+            print(f"SKIPPED -- {e}")
+            skipped.append((date_str, str(e)))
+
+    # ── Final report ──────────────────────────────────────────────────────────
+    print(f"\nPreprocessing complete!")
+    print(f"  Saved  : {len(dates) - len(skipped)} days")
+    print(f"  Skipped: {len(skipped)} days")
+    if skipped:
+        print("\nSkipped days:")
+        for d, reason in skipped:
+            print(f"  {d}  ->  {reason}")
 
 
 if __name__ == "__main__":
