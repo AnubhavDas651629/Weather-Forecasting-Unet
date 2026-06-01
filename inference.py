@@ -30,7 +30,7 @@ def _to_numpy_chw(tensor):
 @torch.no_grad()
 def pred_show_image_grid(data_path, model_path, device, max_samples=None):
     """
-    Grid over manual_test set.
+    Grid over validation set (last 20% of 2014 data).
     Rows per column (one sample):
       1. CAPE input
       2. True tornado probability
@@ -39,7 +39,13 @@ def pred_show_image_grid(data_path, model_path, device, max_samples=None):
       5. Predicted significant-tornado probability
     """
     model = load_model(model_path, device)
-    dataset = NOAATornadoDataset(data_path, test=True)
+    
+    cape_dir = os.path.join(data_path, "train", "cape")
+    all_files = sorted(f for f in os.listdir(cape_dir) if f.startswith("2014"))
+    split_idx = int(len(all_files) * 0.8)
+    val_files = all_files[split_idx:]
+    
+    dataset = NOAATornadoDataset(data_path, test=False, file_list=val_files)
 
     n = len(dataset) if max_samples is None else min(max_samples, len(dataset))
     if n == 0:
@@ -94,9 +100,15 @@ def pred_show_image_grid(data_path, model_path, device, max_samples=None):
 
 @torch.no_grad()
 def single_sample_inference(data_path, model_path, device, sample_index=0):
-    """Run inference on one test sample by index."""
+    """Run inference on one validation test sample by index."""
     model   = load_model(model_path, device)
-    dataset = NOAATornadoDataset(data_path, test=True)
+    
+    cape_dir = os.path.join(data_path, "train", "cape")
+    all_files = sorted(f for f in os.listdir(cape_dir) if f.startswith("2014"))
+    split_idx = int(len(all_files) * 0.8)
+    val_files = all_files[split_idx:]
+    
+    dataset = NOAATornadoDataset(data_path, test=False, file_list=val_files)
 
     if sample_index >= len(dataset):
         raise IndexError(f"sample_index {sample_index} out of range (len={len(dataset)})")
@@ -130,7 +142,7 @@ def single_sample_inference(data_path, model_path, device, sample_index=0):
 
 
 @torch.no_grad()
-def single_day_inference_from_npy(data_path, model_path, device, sample_id, test=True):
+def single_day_inference_from_npy(data_path, model_path, device, sample_id, test=False):
     """
     Run inference when you know the filename/id (e.g. '2014-05-18.npy')
     without using dataset index order.
@@ -204,11 +216,11 @@ if __name__ == "__main__":
     MODEL_PATH = "./models/unet.pth"
     device     = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Grid over all manual_test samples (limit with max_samples for speed)
+    # Grid over all validation samples (limit with max_samples for speed)
     pred_show_image_grid(DATA_PATH, MODEL_PATH, device, max_samples=5)
 
     # One sample by dataset index
     single_sample_inference(DATA_PATH, MODEL_PATH, device, sample_index=0)
 
-    # One day by filename — update to any 2014 date you have in manual_test/
-    # single_day_inference_from_npy(DATA_PATH, MODEL_PATH, device, "2014-05-18.npy")
+    # One day by filename — update to any 2014 date you have in train/
+    # single_day_inference_from_npy(DATA_PATH, MODEL_PATH, device, "2014-11-18.npy")
