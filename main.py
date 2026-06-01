@@ -21,7 +21,7 @@ if __name__ == "__main__":
     LEARNING_RATE = 1e-4
     BATCH_SIZE = 8          # Reduced from 64 — only ~365 days of 2014 data
     EPOCHS = 10
-    DATA_PATH = "/Users/parthapratimdas/Desktop/data"
+    DATA_PATH = "./data"
     MODEL_SAVE_PATH = "./models/unet.pth"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
