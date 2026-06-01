@@ -138,7 +138,8 @@ def single_sample_inference(data_path, model_path, device, sample_index=0):
 
     axes[1, 2].axis("off")
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"single_sample_{sample_index}.png")
+    print(f"Saved single_sample_{sample_index}.png")
 
 
 @torch.no_grad()
@@ -208,7 +209,8 @@ def single_day_inference_from_npy(data_path, model_path, device, sample_id, test
     axes[1, 0].axis("off")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"day_inference_{sample_id}.png")
+    print(f"Saved day_inference_{sample_id}.png")
 
 
 if __name__ == "__main__":
