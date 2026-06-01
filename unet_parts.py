@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -43,5 +44,14 @@ class UpSample(nn.Module):
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
+    
+    # Calculate the spatial differences
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+    
+    # Pad x1 so it matches x2's dimensions
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+        diffY // 2, diffY - diffY // 2])
+    
         x = torch.cat([x1, x2], 1)
-        return self.conv(x)
+        return self.conv(x) 
