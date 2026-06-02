@@ -339,7 +339,7 @@ Model saved to ./models/unet.pth
 
 ## Inference and Evaluation
 
-`inference.py` loads `models/unet.pth`, applies `torch.sigmoid` to logits, and renders probability heatmaps (no binary thresholding).
+`inference.py` loads `models/unet.pth`, applies `torch.sigmoid` to logits, and renders probability heatmaps (no binary thresholding). It now uses official **NOAA Storm Prediction Center (SPC) custom colormaps** for historically accurate visual scaling of tornado probabilities.
 
 ### Prerequisites
 
@@ -512,10 +512,17 @@ FileNotFoundError: .../data/train/cape
 
 ## Limitations and Future Work
 
+### ⚠️ Critical Issue: Spatial Misalignment (Grid Alignment)
+The current `preprocess.py` uses simple PyTorch bilinear interpolation to independently squish both global feature datasets (91x180) and US-only target datasets (65x93) to `256x256`. 
+
+**Why this is a problem:** Unlike standard images, meteorological data has strict geospatial boundaries. Because the inputs and targets cover entirely different bounding boxes, resizing them blindly causes the spatial domains to decouple. The model attempts to learn relationships between the weather in the Atlantic Ocean and tornadoes in Kansas. 
+
+**Required Fix:** `preprocess.py` must be rewritten using a geospatial library (like `xarray` or `scipy.interpolate`) to crop and project the global input coordinates onto the target NCEP Grid 211 (CONUS) *before* creating the tensors.
+
 | Topic | Current state | Suggested improvement |
 |-------|---------------|----------------------|
 | Input channels | 3 (CAPE, CIN, HGT) | Add MSLP, SRH, temperature (6-channel U-Net) |
-| Grid alignment | Independent resize of features (91x180) and labels (65x93) | Regrid all sources to common lat/lon before training |
+| Grid alignment | Independent resize (Squished) | **Regrid all sources to common lat/lon CONUS grid** |
 | Label resizing | Bilinear in `preprocess.py` | Nearest-neighbor for probability masks |
 | Train/val split | Chronological index slices | Year-based split per CS231n paper |
 | Loss | Weighted BCE | KL divergence or focal loss for training |
