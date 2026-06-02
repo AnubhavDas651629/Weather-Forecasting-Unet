@@ -47,7 +47,7 @@ def kl_divergence_from_probs(pred_probs, target, eps=1e-7):
 if __name__ == "__main__":
     LEARNING_RATE = 1e-4
     BATCH_SIZE = 8          # Reduced from 64 — only ~365 days of 2014 data
-    EPOCHS = 10
+    EPOCHS = 50
     DATA_PATH = "./data"
     MODEL_SAVE_PATH = "./models/unet.pth"
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     # KL(target || pred) = BCE(target, logits) - H(target)
     # The paper uses KL divergence as the training objective.
     # We also keep weighted BCE for comparison reporting.
-    pos_weight = torch.tensor([50.0, 100.0]).view(1, 2, 1, 1).to(device)
+    pos_weight = torch.tensor([5.0, 10.0]).view(1, 2, 1, 1).to(device)
     bce_criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # ── Training loop ────────────────────────────────────────────────────────
