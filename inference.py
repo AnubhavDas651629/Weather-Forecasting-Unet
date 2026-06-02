@@ -1,11 +1,66 @@
 import os
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 import torch
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import xarray as xr
 
 from NOAA_dataset import NOAATornadoDataset
 from unet import UNet
+
+
+def load_coordinates():
+    """
+    Load lat/lon coordinate matrices from original netCDF datasets
+    and interpolate them to (256, 256) matching the preprocessed tensors.
+    """
+    cape_nc = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
+    tor_nc = "/Users/parthapratimdas/Downloads/Pper Tor 1979-2023.nc"
+    
+    # Load target coordinates (CONUS Lambert Grid, size 65x93)
+    with xr.open_dataset(tor_nc, use_cftime=False) as ds_t:
+        target_lat = ds_t.lat.values
+        target_lon = ds_t.lon.values
+        
+    # Load input coordinates (Global Grid, size 91x180)
+    with xr.open_dataset(cape_nc, use_cftime=False) as ds_i:
+        in_lon, in_lat = np.meshgrid(ds_i.lon.values, ds_i.lat.values)
+        
+    # Convert lon to -180 to 180 to avoid wrap-around plotting issues in Cartopy
+    target_lon = (target_lon + 180) % 360 - 180
+    in_lon = (in_lon + 180) % 360 - 180
+    
+    # Resize coordinates to (256, 256) using PyTorch bilinear interpolation
+    def _resize_coord(arr):
+        t = torch.tensor(arr, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        r = torch.nn.functional.interpolate(t, size=(256, 256), mode='bilinear', align_corners=False)
+        return r.squeeze().numpy()
+        
+    in_lon_256 = _resize_coord(in_lon)
+    in_lat_256 = _resize_coord(in_lat)
+    tgt_lon_256 = _resize_coord(target_lon)
+    tgt_lat_256 = _resize_coord(target_lat)
+    
+    return in_lon_256, in_lat_256, tgt_lon_256, tgt_lat_256
+
+
+# Define custom SPC Colormap matching the paper and official NOAA SPC hazard scale
+spc_colors = [
+    'none',     # 0% - 2% (transparent, letting map land color show through)
+    '#388E3C',  # 2% - 5% (green)
+    '#8B5A2B',  # 5% - 10% (brown)
+    '#FFEB3B',  # 10% - 15% (yellow)
+    '#D32F2F',  # 15% - 30% (red)
+    '#E91E63',  # 30% - 45% (pink)
+    '#8E24AA',  # 45% - 60% (purple)
+    '#1A237E'   # 60% - 100% (indigo/blue)
+]
+spc_levels = [0.0, 0.02, 0.05, 0.10, 0.15, 0.30, 0.45, 0.60, 1.0]
+spc_cmap = mcolors.ListedColormap(spc_colors)
+spc_norm = mcolors.BoundaryNorm(spc_levels, ncolors=spc_cmap.N)
 
 
 def load_model(model_path, device):
@@ -70,28 +125,51 @@ def pred_show_image_grid(data_path, model_path, device, max_samples=None):
         true_sig.append(y_np[1])
         pred_sig.append(probs[1].numpy())
 
+    # Load coordinates
+    in_lon, in_lat, tgt_lon, tgt_lat = load_coordinates()
+
     rows = [
-        ("CAPE (input)",           cape_inputs, "viridis"),
-        ("True tornado prob",      true_tor,    "hot"),
-        ("Pred tornado prob",      pred_tor,    "hot"),
-        ("True sig. tornado prob", true_sig,    "hot"),
-        ("Pred sig. tornado prob", pred_sig,    "hot"),
+        ("CAPE (input)",           cape_inputs,             "viridis", None),
+        ("True tornado prob",      true_tor,                spc_cmap,  spc_norm),
+        ("Pred tornado prob",      pred_tor,                spc_cmap,  spc_norm),
+        ("True sig. tornado prob", true_sig,                spc_cmap,  spc_norm),
+        ("Pred sig. tornado prob", pred_sig,                spc_cmap,  spc_norm),
     ]
 
-    fig, axes = plt.subplots(len(rows), n, figsize=(3 * n, 3 * len(rows)))
-    if n == 1:
-        axes = axes.reshape(-1, 1)
+    # Map projection for CONUS (Lambert Conformal)
+    proj = ccrs.LambertConformal(central_longitude=-95.0, central_latitude=25.0)
 
-    for row_idx, (title, images, cmap) in enumerate(rows):
+    fig = plt.figure(figsize=(4.5 * n, 4 * len(rows)))
+
+    for row_idx, (title, images, cmap, norm) in enumerate(rows):
         for col_idx in range(n):
-            ax = axes[row_idx, col_idx]
-            im = ax.imshow(images[col_idx], cmap=cmap, vmin=0, vmax=1)
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax_idx = row_idx * n + col_idx + 1
+            ax = fig.add_subplot(len(rows), n, ax_idx, projection=proj)
+            ax.set_extent([-120, -73, 23, 50], crs=ccrs.PlateCarree())
+
+            # Draw geographical base maps (underneath the data)
+            ax.add_feature(cfeature.LAND, facecolor='#f5f5f5', zorder=1)
+            ax.add_feature(cfeature.OCEAN, facecolor='#e0f2f1', zorder=1)
+
+            img_data = images[col_idx]
+            lon_coords = in_lon if row_idx == 0 else tgt_lon
+            lat_coords = in_lat if row_idx == 0 else tgt_lat
+
+            if norm is not None:
+                im = ax.pcolormesh(lon_coords, lat_coords, img_data, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, shading='nearest', zorder=2)
+            else:
+                im = ax.pcolormesh(lon_coords, lat_coords, img_data, transform=ccrs.PlateCarree(), cmap=cmap, vmin=0, vmax=1, shading='nearest', zorder=2)
+
+            # Draw geographical boundaries (on top of the data)
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='black', zorder=3)
+            ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', zorder=3)
+            ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='black', zorder=3)
+
             if col_idx == 0:
-                ax.set_ylabel(title)
+                ax.text(-0.08, 0.5, title, transform=ax.transAxes, rotation=90, va='center', ha='right', weight='bold', fontsize=11)
             if row_idx == 0:
-                ax.set_title(f"sample {col_idx}")
+                ax.set_title(f"sample {col_idx}", weight='bold')
+
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout()
@@ -119,25 +197,45 @@ def single_sample_inference(data_path, model_path, device, sample_index=0):
     probs  = torch.sigmoid(model(x_in)).squeeze(0).cpu().numpy()  # [2, H, W]
     y_np   = _to_numpy_chw(y)
 
-    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
+    in_lon, in_lat, tgt_lon, tgt_lat = load_coordinates()
+
+    fig = plt.figure(figsize=(15, 10))
+    proj = ccrs.LambertConformal(central_longitude=-95.0, central_latitude=25.0)
 
     panels = [
-        (x[0].numpy(),  "CAPE (input)",        "viridis", None),
-        (y_np[0],       "True tornado",         "hot",     (0, 1)),
-        (probs[0],      "Pred tornado",         "hot",     (0, 1)),
-        (y_np[1],       "True sig. tornado",    "hot",     (0, 1)),
-        (probs[1],      "Pred sig. tornado",    "hot",     (0, 1)),
+        (x[0].numpy(),  "CAPE (input)",        "viridis", None, None, in_lon, in_lat),
+        (y_np[0],       "True tornado",         spc_cmap,  spc_norm, None, tgt_lon, tgt_lat),
+        (probs[0],      "Pred tornado",         spc_cmap,  spc_norm, None, tgt_lon, tgt_lat),
+        (y_np[1],       "True sig. tornado",    spc_cmap,  spc_norm, None, tgt_lon, tgt_lat),
+        (probs[1],      "Pred sig. tornado",    spc_cmap,  spc_norm, None, tgt_lon, tgt_lat),
     ]
 
-    for ax, (img, title, cmap, vrange) in zip(axes.flat[:5], panels):
-        vmin, vmax = vrange if vrange else (None, None)
-        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
-        ax.set_title(title)
-        ax.set_xticks([])
-        ax.set_yticks([])
+    for idx, (img, title, cmap, norm, vrange, lon_coords, lat_coords) in enumerate(panels):
+        ax = fig.add_subplot(2, 3, idx + 1, projection=proj)
+        ax.set_extent([-120, -73, 23, 50], crs=ccrs.PlateCarree())
+
+        # Add base maps (underneath the data)
+        ax.add_feature(cfeature.LAND, facecolor='#f5f5f5', zorder=1)
+        ax.add_feature(cfeature.OCEAN, facecolor='#e0f2f1', zorder=1)
+
+        if norm is not None:
+            im = ax.pcolormesh(lon_coords, lat_coords, img, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, shading='nearest', zorder=2)
+        else:
+            vmin, vmax = vrange if vrange else (None, None)
+            im = ax.pcolormesh(lon_coords, lat_coords, img, transform=ccrs.PlateCarree(), cmap=cmap, vmin=vmin, vmax=vmax, shading='nearest', zorder=2)
+
+        # Add base boundaries (on top of the data)
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='black', zorder=3)
+        ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', zorder=3)
+        ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='black', zorder=3)
+
+        ax.set_title(title, weight='bold')
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    axes[1, 2].axis("off")
+    # Empty 6th plot
+    ax_empty = fig.add_subplot(2, 3, 6)
+    ax_empty.axis("off")
+
     plt.tight_layout()
     plt.savefig(f"single_sample_{sample_index}.png")
     print(f"Saved single_sample_{sample_index}.png")
@@ -177,37 +275,49 @@ def single_day_inference_from_npy(data_path, model_path, device, sample_id, test
         sig = np.load(sig_path)
         y   = np.stack([tor, sig], axis=0)   # [2, H, W] — already 256x256 from preprocess
 
+    in_lon, in_lat, tgt_lon, tgt_lat = load_coordinates()
+    proj = ccrs.LambertConformal(central_longitude=-95.0, central_latitude=25.0)
+
     ncols = 3 if y is not None else 2
-    fig, axes = plt.subplots(2, ncols, figsize=(4 * ncols, 8))
+    fig = plt.figure(figsize=(5 * ncols, 10))
+
+    def plot_panel(ax_idx, title, img, cmap, norm=None, vmin=None, vmax=None, is_cape=False):
+        ax = fig.add_subplot(2, ncols, ax_idx, projection=proj)
+        ax.set_extent([-120, -73, 23, 50], crs=ccrs.PlateCarree())
+
+        ax.add_feature(cfeature.LAND, facecolor='#f5f5f5', zorder=1)
+        ax.add_feature(cfeature.OCEAN, facecolor='#e0f2f1', zorder=1)
+
+        lon = in_lon if is_cape else tgt_lon
+        lat = in_lat if is_cape else tgt_lat
+
+        if norm is not None:
+            im = ax.pcolormesh(lon, lat, img, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, shading='nearest', zorder=2)
+        else:
+            im = ax.pcolormesh(lon, lat, img, transform=ccrs.PlateCarree(), cmap=cmap, vmin=vmin, vmax=vmax, shading='nearest', zorder=2)
+
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='black', zorder=3)
+        ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', zorder=3)
+        ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='black', zorder=3)
+
+        ax.set_title(title, weight='bold')
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     # CAPE input
-    im = axes[0, 0].imshow(x[0, 0].cpu().numpy(), cmap="viridis")
-    axes[0, 0].set_title("CAPE (input)")
-    fig.colorbar(im, ax=axes[0, 0], fraction=0.046, pad=0.04)
+    plot_panel(1, "CAPE (input)", x[0, 0].cpu().numpy(), "viridis", is_cape=True)
 
     # Predictions
-    im = axes[0, 1].imshow(probs[0], cmap="hot", vmin=0, vmax=1)
-    axes[0, 1].set_title("Pred tornado")
-    fig.colorbar(im, ax=axes[0, 1], fraction=0.046, pad=0.04)
-
-    im = axes[1, 1].imshow(probs[1], cmap="hot", vmin=0, vmax=1)
-    axes[1, 1].set_title("Pred sig. tornado")
-    fig.colorbar(im, ax=axes[1, 1], fraction=0.046, pad=0.04)
+    plot_panel(2, "Pred tornado", probs[0], spc_cmap, norm=spc_norm)
+    plot_panel(ncols + 2, "Pred sig. tornado", probs[1], spc_cmap, norm=spc_norm)
 
     # Ground truth (if available)
     if y is not None:
-        im = axes[0, 2].imshow(y[0], cmap="hot", vmin=0, vmax=1)
-        axes[0, 2].set_title("True tornado")
-        fig.colorbar(im, ax=axes[0, 2], fraction=0.046, pad=0.04)
+        plot_panel(3, "True tornado", y[0], spc_cmap, norm=spc_norm)
+        plot_panel(ncols + 3, "True sig. tornado", y[1], spc_cmap, norm=spc_norm)
 
-        im = axes[1, 2].imshow(y[1], cmap="hot", vmin=0, vmax=1)
-        axes[1, 2].set_title("True sig. tornado")
-        fig.colorbar(im, ax=axes[1, 2], fraction=0.046, pad=0.04)
-
-    for ax in axes.flat:
-        ax.set_xticks([])
-        ax.set_yticks([])
-    axes[1, 0].axis("off")
+    # Turn off unused axes
+    ax_empty = fig.add_subplot(2, ncols, ncols + 1)
+    ax_empty.axis("off")
 
     plt.tight_layout()
     plt.savefig(f"day_inference_{sample_id}.png")
