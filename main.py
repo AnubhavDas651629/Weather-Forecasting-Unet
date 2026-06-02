@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn.functional as F
 from torch import optim, nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -8,13 +9,39 @@ from unet import UNet
 from NOAA_dataset import NOAATornadoDataset
 
 
-def kl_divergence(pred_probs, target, eps=1e-8):
-    """KL(target || pred) averaged over batch, channels, and spatial dims."""
+def bernoulli_entropy(p, eps=1e-7):
+    """H(p) = -p*log(p) - (1-p)*log(1-p), safe for p in {0, 1}."""
+    p = p.clamp(eps, 1.0 - eps)
+    return -(p * p.log() + (1.0 - p) * (1.0 - p).log())
+
+
+def kl_divergence_from_logits(logits, target, eps=1e-7):
+    """
+    Numerically stable KL(target || pred) for Bernoulli distributions.
+
+    Uses the identity:  KL(p || q) = BCE(p, q) - H(p)
+    where BCE is computed from raw logits (log-sum-exp trick) and
+    H(p) is the entropy of the target distribution.
+
+    This avoids 0*log(0) by never computing log(pred_prob) directly.
+    """
+    # BCE(target, logits) — numerically stable via log-sum-exp
+    bce = F.binary_cross_entropy_with_logits(logits, target, reduction='mean')
+    # H(target) — the entropy of the ground truth labels
+    h_target = bernoulli_entropy(target, eps).mean()
+    return bce - h_target
+
+
+def kl_divergence_from_probs(pred_probs, target, eps=1e-7):
+    """
+    Compute KL(target || pred) from sigmoid probabilities (for reporting).
+    Safe version that handles target values at exactly 0 or 1.
+    """
     target = target.clamp(eps, 1.0 - eps)
     pred_probs = pred_probs.clamp(eps, 1.0 - eps)
-    kl_pos = target * (target.log() - pred_probs.log())
-    kl_neg = (1.0 - target) * ((1.0 - target).log() - (1.0 - pred_probs).log())
-    return (kl_pos + kl_neg).mean()
+    kl = target * (target.log() - pred_probs.log()) \
+       + (1.0 - target) * ((1.0 - target).log() - (1.0 - pred_probs).log())
+    return kl.mean()
 
 
 if __name__ == "__main__":
@@ -64,45 +91,61 @@ if __name__ == "__main__":
     model = UNet(in_channels=3, num_classes=2).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    # Higher weight on rare positive (tornado) pixels
+    # ── Loss: KL divergence (matching the paper) ─────────────────────────
+    # KL(target || pred) = BCE(target, logits) - H(target)
+    # The paper uses KL divergence as the training objective.
+    # We also keep weighted BCE for comparison reporting.
     pos_weight = torch.tensor([50.0, 100.0]).view(1, 2, 1, 1).to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    bce_criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # ── Training loop ────────────────────────────────────────────────────────
     for epoch in range(EPOCHS):
 
-        # --- Train ---
+        # --- Train (KL divergence loss, matching the paper) ---
         model.train()
-        train_running_loss = 0.0
+        train_kl_total  = 0.0
+        train_bce_total = 0.0
         for x, y in tqdm(train_dataloader, desc=f"Train {epoch+1}/{EPOCHS}"):
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(x), y)
+            logits = model(x)
+            # Primary loss: KL divergence (paper's objective)
+            loss = kl_divergence_from_logits(logits, y)
             loss.backward()
             optimizer.step()
-            train_running_loss += loss.item()
+            train_kl_total  += loss.item()
+            # Secondary metric: weighted BCE (for comparison)
+            with torch.no_grad():
+                train_bce_total += bce_criterion(logits, y).item()
 
-        train_loss = train_running_loss / len(train_dataloader)
+        train_kl  = train_kl_total  / len(train_dataloader)
+        train_bce = train_bce_total / len(train_dataloader)
 
         # --- Validate ---
         model.eval()
-        val_running_loss = 0.0
-        val_kl_total     = 0.0
+        val_bce_total = 0.0
+        val_kl_total  = 0.0
+        val_mae_total = 0.0
         with torch.no_grad():
             for x, y in tqdm(val_dataloader, desc=f"Val   {epoch+1}/{EPOCHS}"):
                 x, y = x.to(device), y.to(device)
-                y_pred = model(x)
-                val_running_loss += criterion(y_pred, y).item()
-                val_kl_total     += kl_divergence(torch.sigmoid(y_pred), y).item()
+                logits = model(x)
+                probs  = torch.sigmoid(logits)
+                val_bce_total += bce_criterion(logits, y).item()
+                val_kl_total  += kl_divergence_from_logits(logits, y).item()
+                val_mae_total += (probs - y).abs().mean().item()
 
-        val_loss = val_running_loss / len(val_dataloader)
-        avg_kl   = val_kl_total     / len(val_dataloader)
+        val_bce = val_bce_total / len(val_dataloader)
+        val_kl  = val_kl_total  / len(val_dataloader)
+        val_mae = val_mae_total / len(val_dataloader)
 
         print("-" * 50)
         print(f"Epoch {epoch+1}/{EPOCHS}")
-        print(f"  Train BCE : {train_loss:.4f}")
-        print(f"  Val BCE   : {val_loss:.4f}")
-        print(f"  Val KL    : {avg_kl:.4f}")
+        print(f"  Train KL  : {train_kl:.4f}")
+        print(f"  Train BCE : {train_bce:.4f}")
+        print(f"  Val KL    : {val_kl:.4f}")
+        print(f"  Val BCE   : {val_bce:.4f}")
+        print(f"  Val MAE   : {val_mae:.6f}")
         print("-" * 50)
 
     # ── Save ─────────────────────────────────────────────────────────────────

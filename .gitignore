@@ -1,5 +1,16 @@
 venv/
-venv/
 
 Main_Unet/
 
+# Ignore large model files and weights
+models/
+*.pth
+
+# Ignore generated images
+*.png
+
+# Ignore dataset files
+data/
+*.npy
+*.nc
+.DS_Store
