@@ -4,6 +4,7 @@ import xarray as xr
 import torch
 from torch.nn.functional import interpolate
 
+# scp -r . ramesh@192.168.33.59:/tmp/abc/  
 # ── Input .nc file paths (2014) ───────────────────────────────────────────────
 # Plain strings — no backslashes needed before spaces.
 CAPE_PATH          = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
