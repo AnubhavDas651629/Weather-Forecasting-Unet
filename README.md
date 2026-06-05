@@ -417,9 +417,9 @@ flowchart TB
 
 ### Building blocks (`unet_parts.py`)
 
-- **DoubleConv**: Two 3x3 convolutions, ReLU, same padding.
-- **DownSample**: DoubleConv followed by 2x2 max pooling; returns skip tensor and pooled tensor.
-- **UpSample**: Transposed convolution (upsample), concatenation with skip feature, DoubleConv.
+- **TripleConv**: Three 3x3 convolutions, ReLU, same padding.
+- **DownSample**: TripleConv followed by 2x2 max pooling; returns skip tensor and pooled tensor.
+- **UpSample**: Transposed convolution (upsample), concatenation with skip feature, TripleConv.
 
 ---
 

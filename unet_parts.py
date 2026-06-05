@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class DoubleConv(nn.Module):
-    """(convolution => [BN] => ReLU) * 2"""
+class TripleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 3"""
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv_op = nn.Sequential(
@@ -13,6 +13,11 @@ class DoubleConv(nn.Module):
             nn.ReLU(inplace=True),
             
             # SECOND LAYER FIX: Must map outputs (64) to outputs (64)!
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+
+            # THIRD LAYER: Adds depth to the network
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
@@ -29,7 +34,7 @@ class DoubleConv(nn.Module):
 class DownSample(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv = DoubleConv(in_channels, out_channels)
+        self.conv = TripleConv(in_channels, out_channels)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
@@ -45,7 +50,7 @@ class UpSample(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
-        self.conv = DoubleConv(in_channels, out_channels)
+        self.conv = TripleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)

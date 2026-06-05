@@ -103,7 +103,7 @@ def create_presentation():
         ("", "The project is a PyTorch implementation of a U-Net for spatial tornado probability forecasting over the contiguous United States (CONUS)."),
         ("1. preprocess.py:", "Converts raw NetCDF NOAA data (CAPE, CIN, HGT) and Gensini target probabilities into aligned 256x256 NumPy arrays."),
         ("2. NOAA_dataset.py:", "A custom PyTorch Dataset that loads the preprocessed numpy arrays, handles missing values, and normalizes the data on the fly."),
-        ("3. unet_parts.py & unet.py:", "Defines the U-Net neural network architecture using reusable blocks (DoubleConv, DownSample, UpSample)."),
+        ("3. unet_parts.py & unet.py:", "Defines the U-Net neural network architecture using reusable blocks (TripleConv, DownSample, UpSample)."),
         ("4. main.py:", "Executes the core training and validation loops, utilizing Adam optimizer, Weighted BCE Loss, and KL Divergence for evaluation."),
         ("5. inference.py:", "Loads the trained model weights and generates visual probability heatmaps comparing predictions against ground truth.")
     ])
@@ -145,9 +145,9 @@ def create_presentation():
     add_section_slide("UNET.PY & UNET_PARTS.PY")
     
     add_content_slide("ARCHITECTURE & HELPER CLASSES:", [
-        ("class DoubleConv(nn.Module):", "What it does: Two sequential 3x3 convolutions, each followed by BatchNorm2d and a ReLU activation.\nWhy we need it: The foundational feature-extraction block of the network."),
-        ("class DownSample(nn.Module):", "What it does: Applies a DoubleConv and then a 2x2 MaxPool2d to halve the spatial dimensions.\nWhy we need it: Used in the encoder to extract deep, abstract meteorological features while reducing computational load."),
-        ("class UpSample(nn.Module):", "What it does: Applies a ConvTranspose2d to double spatial dimensions, calculates spatial differences, pads the upsampled tensor to perfectly match the encoder's skip connection, concatenates them, and applies a DoubleConv.\nWhy we need it: Used in the decoder to restore high-resolution spatial boundaries and merge them with abstract features."),
+        ("class TripleConv(nn.Module):", "What it does: Three sequential 3x3 convolutions, each followed by BatchNorm2d and a ReLU activation.\nWhy we need it: The foundational feature-extraction block of the network."),
+        ("class DownSample(nn.Module):", "What it does: Applies a TripleConv and then a 2x2 MaxPool2d to halve the spatial dimensions.\nWhy we need it: Used in the encoder to extract deep, abstract meteorological features while reducing computational load."),
+        ("class UpSample(nn.Module):", "What it does: Applies a ConvTranspose2d to double spatial dimensions, calculates spatial differences, pads the upsampled tensor to perfectly match the encoder's skip connection, concatenates them, and applies a TripleConv.\nWhy we need it: Used in the decoder to restore high-resolution spatial boundaries and merge them with abstract features."),
         ("class UNet(nn.Module):", "What it does: The master assembly. Chains 4 DownSample blocks into a 1024-channel bottleneck, followed by 4 UpSample blocks. Ends with a 1x1 convolution mapping to 2 target classes (logits).\nWhy we need it: This is the complete neural network that maps raw weather inputs to tornado probability maps.")
     ])
 
