@@ -43,7 +43,6 @@ def kl_divergence_from_probs(pred_probs, target, eps=1e-7):
        + (1.0 - target) * ((1.0 - target).log() - (1.0 - pred_probs).log())
     return kl.mean()
 
-
 if __name__ == "__main__":
     LEARNING_RATE = 1e-4
     BATCH_SIZE = 8          # Reduced from 64 — only ~365 days of 2014 data
