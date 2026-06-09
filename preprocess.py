@@ -1,16 +1,17 @@
 import os
+
 import numpy as np
-import xarray as xr
 import torch
+import xarray as xr
 from torch.nn.functional import interpolate
 
-# scp -r . ramesh@192.168.33.59:/tmp/abc/  
+# scp -r . ramesh@192.168.33.59:/tmp/abc/
 # ── Input .nc file paths (2014) ───────────────────────────────────────────────
 # Plain strings — no backslashes needed before spaces.
-CAPE_PATH          = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
-CIN_PATH           = "/Users/parthapratimdas/Downloads/CIN 2014.nc"
-HGT_PATH           = "/Users/parthapratimdas/Downloads/HGT Tropo 2014.nc"
-TOR_TARGET_PATH    = "/Users/parthapratimdas/Downloads/Pper Tor 1979-2023.nc"
+CAPE_PATH = "/Users/parthapratimdas/Downloads/CAPE 2014.nc"
+CIN_PATH = "/Users/parthapratimdas/Downloads/CIN 2014.nc"
+HGT_PATH = "/Users/parthapratimdas/Downloads/HGT Tropo 2014.nc"
+TOR_TARGET_PATH = "/Users/parthapratimdas/Downloads/Pper Tor 1979-2023.nc"
 SIGTOR_TARGET_PATH = "/Users/parthapratimdas/Downloads/Pper Sig Tor 1979-2023.nc"
 
 OUTPUT_DIR = "./data"
@@ -37,9 +38,9 @@ def resize_grid(matrix_2d):
     - Returns a plain (256, 256) numpy float32 array.
     """
     arr = np.nan_to_num(matrix_2d, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-    tensor  = torch.tensor(arr).unsqueeze(0).unsqueeze(0)           # [1,1,H,W]
-    resized = interpolate(tensor, size=(256, 256), mode='bilinear', align_corners=False)
-    return resized.squeeze().numpy()                                  # (256,256)
+    tensor = torch.tensor(arr).unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+    resized = interpolate(tensor, size=(256, 256), mode="bilinear", align_corners=False)
+    return resized.squeeze().numpy()  # (256,256)
 
 
 def get_variable(ds):
@@ -51,7 +52,19 @@ def get_variable(ds):
     candidates = list(ds.data_vars)
     if len(candidates) == 1:
         return candidates[0]
-    for name in ["cape", "cin", "hgt", "prob", "CAPE", "CIN", "HGT", "PROB", "p_perfect_tor", "p_perfect_sigtor", "p_perfect_sig_tor"]:
+    for name in [
+        "cape",
+        "cin",
+        "hgt",
+        "prob",
+        "CAPE",
+        "CIN",
+        "HGT",
+        "PROB",
+        "p_perfect_tor",
+        "p_perfect_sigtor",
+        "p_perfect_sig_tor",
+    ]:
         if name in ds.data_vars:
             return name
     raise KeyError(
@@ -72,9 +85,9 @@ def extract_2d(da, date):
     """
     da = da.sel(time=date)
 
-    if 'level' in da.dims:
+    if "level" in da.dims:
         da = da.isel(level=0)
-    if 'ensemble' in da.dims:
+    if "ensemble" in da.dims:
         da = da.isel(ensemble=0)
 
     da = da.squeeze()
@@ -85,7 +98,7 @@ def extract_2d(da, date):
             f"with dims {da.dims}. Add an explicit .isel() for the extra dimension."
         )
 
-    return da.values   # numpy array (H, W)
+    return da.values  # numpy array (H, W)
 
 
 def save_validated(arr, path, label):
@@ -111,31 +124,33 @@ def main():
     # Forcing use_cftime=False ensures all time axes are numpy.datetime64,
     # so np.intersect1d works correctly across all five datasets.
     print("Loading 2014 atmospheric feature files...")
-    ds_cape = xr.open_dataset(CAPE_PATH,          use_cftime=False)
-    ds_cin  = xr.open_dataset(CIN_PATH,           use_cftime=False)
-    ds_hgt  = xr.open_dataset(HGT_PATH,           use_cftime=False)
+    ds_cape = xr.open_dataset(CAPE_PATH, use_cftime=False)
+    ds_cin = xr.open_dataset(CIN_PATH, use_cftime=False)
+    ds_hgt = xr.open_dataset(HGT_PATH, use_cftime=False)
 
     print("Loading target files and slicing 2014...")
-    ds_tor    = xr.open_dataset(TOR_TARGET_PATH,    use_cftime=False).sel(time="2014")
+    ds_tor = xr.open_dataset(TOR_TARGET_PATH, use_cftime=False).sel(time="2014")
     ds_sigtor = xr.open_dataset(SIGTOR_TARGET_PATH, use_cftime=False).sel(time="2014")
 
     # Auto-detect variable names
-    cape_var   = get_variable(ds_cape)
-    cin_var    = get_variable(ds_cin)
-    hgt_var    = get_variable(ds_hgt)
-    tor_var    = get_variable(ds_tor)
+    cape_var = get_variable(ds_cape)
+    cin_var = get_variable(ds_cin)
+    hgt_var = get_variable(ds_hgt)
+    tor_var = get_variable(ds_tor)
     sigtor_var = get_variable(ds_sigtor)
 
-    print(f"Detected variables  ->  "
-          f"cape='{cape_var}'  cin='{cin_var}'  hgt='{hgt_var}'  "
-          f"tor='{tor_var}'  sigtor='{sigtor_var}'")
+    print(
+        f"Detected variables  ->  "
+        f"cape='{cape_var}'  cin='{cin_var}'  hgt='{hgt_var}'  "
+        f"tor='{tor_var}'  sigtor='{sigtor_var}'"
+    )
 
     # ── Build fully-aligned date list across ALL five datasets ───────────────
     dates = ds_cape.time.values
     for ds, label in [
-        (ds_cin,    "CIN"),
-        (ds_hgt,    "HGT"),
-        (ds_tor,    "tornado target"),
+        (ds_cin, "CIN"),
+        (ds_hgt, "HGT"),
+        (ds_tor, "tornado target"),
         (ds_sigtor, "sigtor target"),
     ]:
         dates = np.intersect1d(dates, ds.time.values)
@@ -153,21 +168,41 @@ def main():
     # ── Process each day ──────────────────────────────────────────────────────
     skipped = []
     for i, date in enumerate(dates):
-        date_str = np.datetime_as_string(date, unit='D')
-        print(f"[{i+1}/{len(dates)}] {date_str} ...", end=" ", flush=True)
+        date_str = np.datetime_as_string(date, unit="D")
+        print(f"[{i + 1}/{len(dates)}] {date_str} ...", end=" ", flush=True)
 
         try:
-            cape_map   = extract_2d(ds_cape[cape_var],     date)
-            cin_map    = extract_2d(ds_cin[cin_var],       date)
-            hgt_map    = extract_2d(ds_hgt[hgt_var],       date)
-            tor_map    = extract_2d(ds_tor[tor_var],       date)
+            cape_map = extract_2d(ds_cape[cape_var], date)
+            cin_map = extract_2d(ds_cin[cin_var], date)
+            hgt_map = extract_2d(ds_hgt[hgt_var], date)
+            tor_map = extract_2d(ds_tor[tor_var], date)
             sigtor_map = extract_2d(ds_sigtor[sigtor_var], date)
 
-            save_validated(cape_map,   os.path.join(OUTPUT_DIR, "train/cape",          f"{date_str}.npy"), f"{date_str}/cape")
-            save_validated(cin_map,    os.path.join(OUTPUT_DIR, "train/cin",           f"{date_str}.npy"), f"{date_str}/cin")
-            save_validated(hgt_map,    os.path.join(OUTPUT_DIR, "train/geo",           f"{date_str}.npy"), f"{date_str}/geo")
-            save_validated(tor_map,    os.path.join(OUTPUT_DIR, "train_masks/tornado", f"{date_str}.npy"), f"{date_str}/tor")
-            save_validated(sigtor_map, os.path.join(OUTPUT_DIR, "train_masks/sigtor",  f"{date_str}.npy"), f"{date_str}/sigtor")
+            save_validated(
+                cape_map,
+                os.path.join(OUTPUT_DIR, "train/cape", f"{date_str}.npy"),
+                f"{date_str}/cape",
+            )
+            save_validated(
+                cin_map,
+                os.path.join(OUTPUT_DIR, "train/cin", f"{date_str}.npy"),
+                f"{date_str}/cin",
+            )
+            save_validated(
+                hgt_map,
+                os.path.join(OUTPUT_DIR, "train/geo", f"{date_str}.npy"),
+                f"{date_str}/geo",
+            )
+            save_validated(
+                tor_map,
+                os.path.join(OUTPUT_DIR, "train_masks/tornado", f"{date_str}.npy"),
+                f"{date_str}/tor",
+            )
+            save_validated(
+                sigtor_map,
+                os.path.join(OUTPUT_DIR, "train_masks/sigtor", f"{date_str}.npy"),
+                f"{date_str}/sigtor",
+            )
 
             print("done")
 

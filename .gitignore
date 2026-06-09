@@ -14,3 +14,13 @@ data/
 *.npy
 *.nc
 .DS_Store
+
+# Added by AI for optimization
+__pycache__/
+*.pyc
+.cursor/
+.vscode/
+.idea/
+*.zip
+Results/
+evaluation_plots/
