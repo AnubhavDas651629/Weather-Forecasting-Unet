@@ -159,6 +159,7 @@ Unet-implementation/
 ├── NOAA_dataset.py           # PyTorch Dataset for weather grids
 ├── unet.py                   # U-Net assembly
 ├── unet_parts.py             # Encoder/decoder building blocks
+├── evaluate_severe_days.py   # Automated severe day evaluation and plotting
 ├── requirements.txt          # Core Python dependencies
 ├── models/                   # Saved checkpoints (created at train time)
 ├── data/                     # Preprocessed NumPy tensors (not in git)
@@ -358,6 +359,16 @@ python inference.py
 | `pred_show_image_grid()` | Multi-sample comparison grid (CAPE, true/pred tornado, true/pred sigtor) |
 | `single_sample_inference()` | Detailed panels for one test index |
 | `single_day_inference_from_npy()` | Inference from explicit `.npy` filenames |
+
+### Bulk Evaluation of Severe Days
+
+The script `evaluate_severe_days.py` can be used to automatically find and plot the most severe weather days in the dataset:
+
+```bash
+python evaluate_severe_days.py
+```
+
+This script scans the dataset for days where the true tornado probability exceeds a given threshold (default 10%), runs inference on those days, and saves annotated probability heatmaps into the `evaluation_plots/` directory for manual review.
 
 ---
 
